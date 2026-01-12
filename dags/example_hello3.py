@@ -6,13 +6,13 @@ def hello():
     print("hello from DAG on MWAA/S3!")
 
 with DAG(
-    dag_id="example_hello",
+    dag_id="example_hello3",
     start_date=datetime(2024, 1, 1),
     schedule=None,
     catchup=False,
     tags=["demo"],
 ) as dag:
     PythonOperator(
-        task_id="hello_task",
+        task_id="hello_task3",
         python_callable=hello,
     )
