@@ -1,27 +1,113 @@
-name: Approve & Deploy DAGs to S3
+name: Deploy DAGs to S3 (Manual Approve)
 
 on:
+  push:
+    branches: ["main"]
+    paths: ["dags/**"]
   workflow_dispatch: {}
 
 permissions:
   contents: read
+  issues: write   # สร้าง/อ่าน/ปิด issue
+  actions: read
+
+concurrency:
+  group: mwaa-dags-deploy
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  request_approval:
     runs-on: ubuntu-latest
+    outputs:
+      issue_number: ${{ steps.create.outputs.issue_number }}
+      issue_url: ${{ steps.create.outputs.issue_url }}
+    steps:
+      - name: Create approval issue
+        id: create
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const sha   = context.sha;
+            const ref   = context.ref;
 
+            const title = `Approve MWAA DAG deploy for ${sha.substring(0,7)}`;
+            const body  = [
+              `A deploy was triggered by **${ref}**`,
+              ``,
+              `Commit: \`${sha}\``,
+              ``,
+              `✅ To approve, comment exactly:`,
+              `\`/approve\``,
+              ``,
+              `❌ To reject, comment exactly:`,
+              `\`/reject\``,
+            ].join("\n");
+
+            // สร้าง issue
+            const issue = await github.rest.issues.create({
+              owner, repo, title, body
+            });
+
+            core.setOutput("issue_number", issue.data.number.toString());
+            core.setOutput("issue_url", issue.data.html_url);
+
+  wait_for_approval:
+    needs: request_approval
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for /approve or /reject comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+            const issue_number = Number("${{ needs.request_approval.outputs.issue_number }}");
+
+            const approveWord = "/approve";
+            const rejectWord  = "/reject";
+
+            const timeoutMinutes = 60;   // ปรับได้
+            const pollSeconds    = 15;
+
+            const deadline = Date.now() + timeoutMinutes * 60 * 1000;
+
+            async function getDecision() {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number, per_page: 100
+              });
+
+              // หา comment ล่าสุดที่เป็นคำสั่ง
+              const cmds = comments
+                .map(c => ({ body: (c.body || "").trim(), user: c.user?.login, created: c.created_at }))
+                .filter(x => x.body === approveWord || x.body === rejectWord)
+                .sort((a,b) => new Date(b.created) - new Date(a.created));
+
+              return cmds[0] || null;
+            }
+
+            while (Date.now() < deadline) {
+              const decision = await getDecision();
+              if (decision) {
+                if (decision.body === rejectWord) {
+                  core.setFailed(`Rejected by @${decision.user}`);
+                  return;
+                }
+                core.notice(`Approved by @${decision.user}`);
+                return;
+              }
+              await new Promise(r => setTimeout(r, pollSeconds * 1000));
+            }
+
+            core.setFailed(`Timed out waiting for approval (${timeoutMinutes}m).`);
+
+  deploy:
+    needs: wait_for_approval
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Read approved SHA
-        id: sha
-        run: echo "SHA=$(cat .github/DEPLOY_SHA)" >> $GITHUB_OUTPUT
-
-      - name: Checkout approved SHA
-        run: |
-          git fetch --all
-          git checkout ${{ steps.sha.outputs.SHA }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
