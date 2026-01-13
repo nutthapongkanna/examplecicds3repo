@@ -7,7 +7,7 @@ def hello():
 
 with DAG(
 
-    dag_id="example_hello19",
+    dag_id="example_hello15",
 
 
     start_date=datetime(2024, 1, 1),
@@ -17,6 +17,6 @@ with DAG(
 ) as dag:
     PythonOperator(
 
-        task_id="hello_task8",
+        task_id="hello_task15",
         python_callable=hello,
     )

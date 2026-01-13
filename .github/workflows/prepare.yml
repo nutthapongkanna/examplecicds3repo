@@ -1,0 +1,22 @@
+name: Prepare DAG Deploy
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["dags/**"]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Save latest SHA for approval
+        run: |
+          echo "${GITHUB_SHA}" > .github/DEPLOY_SHA
+      - name: Commit DEPLOY_SHA
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: ".github/DEPLOY_SHA"
+          message: "chore: update deploy sha"
